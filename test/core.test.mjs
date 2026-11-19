@@ -266,3 +266,42 @@ test('amplía la búsqueda a variantes de género y número solo al activar la c
   assert.deepEqual(filterJobs(jobs, { ...emptyFilters, query: 'ingeniera óptica', similar: true }).map(job => job.title),
     ['Ingeniero óptico', 'Ingeniera óptica', 'Ingenieras de óptica']);
 });
+
+test('InfoJobs solicita el detalle con credenciales de aplicación y omite fichas cerradas', async t => {
+  const { fetchInfoJobs } = await import('../server/sources.mjs');
+  const rows = [
+    { id: 'test-optics', title: 'Ingeniería óptica', city: 'Tres Cantos', published: '2026-11-19T10:00:00Z', author: { name: 'Empresa de prueba' }, teleworking: { value: 'Híbrido' } },
+    { id: 'test-closed', title: 'Oferta cerrada', city: 'Madrid' },
+    { id: 'test-no-detail', title: 'Ficha incompleta', city: 'Madrid' },
+  ];
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (input, options) => {
+    const url = new URL(input);
+    calls.push(url.pathname);
+    assert.equal(url.host, 'api.infojobs.net');
+    assert.equal(options.redirect, 'error');
+    assert.equal(options.headers.Authorization, 'Basic ' + Buffer.from('test-id:test-secret').toString('base64'));
+    if (url.pathname === '/api/9/offer') {
+      assert.equal(url.searchParams.get('province'), 'madrid');
+      return Response.json({ offers: rows });
+    }
+    if (url.pathname.endsWith('test-closed')) return Response.json({ active: false });
+    if (url.pathname.endsWith('test-no-detail')) return Response.json({});
+    return Response.json({
+      link: 'https://www.infojobs.net/oferta-prueba', active: true,
+      description: 'Montar y validar instrumentos ópticos.',
+      minRequirements: 'Experiencia de laboratorio.',
+      showPay: true, minPay: { amount: 40000, amountValue: '40.000 €', periodValue: 'Bruto/año' },
+      maxPay: { amount: 50000, amountValue: '50.000 €' },
+    });
+  });
+  assert.equal(fetchInfoJobs('Madrid', null), null);
+  const { jobs, status } = await fetchInfoJobs('Madrid', { id: 'test-id', secret: 'test-secret' });
+  assert.ok(status.ok);
+  assert.equal(jobs.length, 1);
+  assert.equal(calls.filter(path => path === '/api/7/offer/test-optics').length, 1);
+  assert.match(jobs[0].description, /Requisitos\nExperiencia de laboratorio/);
+  assert.equal(jobs[0].mode, 'Híbrido');
+  assert.equal(jobs[0].salary, '40.000 € – 50.000 € Bruto/año');
+  assert.equal(jobs[0].source, 'InfoJobs');
+});

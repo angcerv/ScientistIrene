@@ -75,6 +75,9 @@ app.post('/api/cv', express.raw({ type: 'application/pdf', limit: '8mb' }), asyn
 });
 app.use(express.json({ limit: '180kb' }));
 app.get('/api/profile', (_req, res) => res.json(profile()));
+app.get('/api/profile/export', (_req, res) => {
+  res.attachment('brujula-perfil.json').type('application/json').send(JSON.stringify(profile(), null, 2) + '\n');
+});
 app.put('/api/profile', (req, res) => {
   if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) return res.status(400).json({ error: 'Perfil inválido.' });
   const data = cleanProfile(req.body);

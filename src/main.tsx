@@ -1,7 +1,7 @@
 import { StrictMode, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  ArrowUpRight, Bookmark, BriefcaseBusiness, Building2, CalendarDays, Check, ChevronDown, ClipboardCheck, Compass, FileUp, Info,
+  ArrowUpRight, Bookmark, BriefcaseBusiness, Building2, CalendarDays, Check, ChevronDown, ClipboardCheck, Compass, FileDown, FileUp, Info,
   LoaderCircle, MapPin, PanelLeftClose, PanelLeftOpen, Plane, Search, SlidersHorizontal, Sparkles, ThumbsDown, Trash2, Undo2, UserRound, Wallet, X,
 } from 'lucide-react';
 import { emptyFilters, filterJobs, type JobFilters } from './job-filters';
@@ -41,6 +41,7 @@ type Careers = { roles: { title: string; reason: string }[]; method: string; war
 type Page = 'search' | 'profile' | 'careers' | 'saved';
 const dateFormat = new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'Europe/Madrid' });
 const applicationDate = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Europe/Madrid' });
+const ipronicsCareers = 'https://ipronics.com/careers/';
 const countFormat = new Intl.NumberFormat('es-ES');
 const date = (input: string | null) => input && Number.isFinite(Date.parse(input)) ? dateFormat.format(new Date(input)) : 'Fecha sin publicar';
 const message = (error: unknown) => error instanceof Error ? error.message : 'No se pudo completar la operación.';
@@ -114,12 +115,12 @@ function Loading({ title, view = 'cards' }: { title: string; view?: 'cards' | 'j
   </section>;
 }
 
-function ResultsFilters({ filters, companies, priorityLocation, careerScoped, showFilters, expanded, onToggleFilters, searching, searchDisabled, onChange, onSearch }: {
-  filters: JobFilters; companies: string[]; priorityLocation: string; careerScoped: boolean; showFilters: boolean;
+function ResultsFilters({ filters, companies, priorityLocation, showFilters, expanded, onToggleFilters, searching, searchDisabled, onChange, onSearch }: {
+  filters: JobFilters; companies: string[]; priorityLocation: string; showFilters: boolean;
   expanded: boolean; onToggleFilters: () => void; searching: boolean; searchDisabled: boolean; onChange: (filters: JobFilters) => void; onSearch: () => void;
 }) {
   const set = (field: keyof JobFilters, value: string) => onChange({ ...filters, [field]: value });
-  const filterCount = Object.entries(filters).filter(([key, value]) => key !== 'query' && key !== 'similar' && !!value).length;
+  const filterCount = Object.entries(filters).filter(([key, value]) => key !== 'query' && key !== 'similar' && key !== 'sort' && !!value).length;
   const active = !!filters.query || filterCount > 0;
   return <form className="panel results-filters" role="search" aria-label="Ofertas de empleo" onSubmit={event => {
     event.preventDefault();
@@ -136,7 +137,7 @@ function ResultsFilters({ filters, companies, priorityLocation, careerScoped, sh
       </button>
       {showFilters && <button type="button" className="button secondary filters-trigger" aria-expanded={expanded} aria-controls="search-filters"
         onClick={onToggleFilters}><SlidersHorizontal size={17} /> <span>Filtros</span>{filterCount > 0 && <span className="tag">{filterCount}</span>}</button>}
-      {active && <button type="button" className="icon-button" aria-label="Limpiar búsqueda y filtros" title="Limpiar búsqueda y filtros" onClick={() => onChange({ ...emptyFilters, similar: filters.similar })}><X size={18} /></button>}
+      {active && <button type="button" className="icon-button" aria-label="Limpiar búsqueda y filtros" title="Limpiar búsqueda y filtros" onClick={() => onChange({ ...emptyFilters, similar: filters.similar, sort: filters.sort })}><X size={18} /></button>}
     </div>
     <label className="search-similar">
       <input type="checkbox" checked={filters.similar} onChange={event => onChange({ ...filters, similar: event.target.checked })} />
@@ -156,9 +157,6 @@ function ResultsFilters({ filters, companies, priorityLocation, careerScoped, sh
         </select></label>
         <label>Empresa<select data-filter-active={!!filters.company} value={filters.company} onChange={event => set('company', event.target.value)}>
           <option value="">Todas</option>{companies.map(company => <option key={company}>{company}</option>)}
-        </select></label>
-        <label>Orden<select data-filter-active={!!filters.sort} value={filters.sort} onChange={event => set('sort', event.target.value)}>
-          <option value="">{careerScoped ? 'Afinidad con la profesión' : 'Recomendadas'}</option><option value="fit">Mayor encaje</option><option value="newest">Más recientes</option>
         </select></label>
       </div>
     </div>}
@@ -192,7 +190,7 @@ function ProfileForm({ profile, onSave, notify }: { profile: Profile; onSave: (p
     setError(''); setText(''); setImported(null); setWholeProfile(false); setBusy('import');
     try {
       if (/\.json$/i.test(file.name)) {
-        if (file.size > 180000) throw new Error('El archivo de perfil supera el tamaño permitido.');
+        if (file.size > 512 * 1024) throw new Error('El archivo de perfil supera los 512 KB.');
         let parsed: unknown;
         try { parsed = JSON.parse(await file.text()); }
         catch { throw new Error('No se pudo leer el archivo de perfil JSON.'); }
@@ -200,7 +198,12 @@ function ProfileForm({ profile, onSave, notify }: { profile: Profile; onSave: (p
         const data = parsed as Record<string, unknown>;
         const keys = Object.keys(draft) as (keyof Profile)[];
         const imported: Record<string, unknown> = { salaryMax: 0, ...data };
-        if (keys.some(key => typeof imported[key] !== typeof draft[key]) || ![data.education, data.experience, data.skills].some(Boolean)) {
+        if (keys.some(key => {
+          const value = imported[key];
+          return key === 'salary' || key === 'salaryMax'
+            ? typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 10000000
+            : typeof value !== 'string' || value.length > (key === 'location' ? 150 : 10000);
+        })) {
           throw new Error('El archivo no tiene el formato de perfil de Brújula Empleo.');
         }
         setImported(Object.fromEntries(keys.map(key => [key, imported[key]])) as Profile);
@@ -234,14 +237,19 @@ function ProfileForm({ profile, onSave, notify }: { profile: Profile; onSave: (p
     <div className="panel import">
       <span className="tile"><FileUp size={23} /></span>
       <div><h2>Importar CV o perfil</h2><p>PDF con texto seleccionable, hasta 8 MB, o perfil de Brújula en JSON.</p></div>
-      <label className="button secondary upload" aria-disabled={!!busy}>
-        {busy === 'import' ? <LoaderCircle className="spin" size={18} /> : <FileUp size={18} />} Elegir archivo
-        <input type="file" aria-label="Elegir CV o perfil" accept=".pdf,.json,application/pdf,application/json" disabled={!!busy}
-          onChange={event => { void upload(event.target.files?.[0]); event.target.value = ''; }} />
-      </label>
+      <div className="profile-transfer-actions">
+        <label className="button secondary upload" aria-disabled={!!busy}>
+          {busy === 'import' ? <LoaderCircle className="spin" size={18} /> : <FileUp size={18} />} Importar archivo
+          <input type="file" aria-label="Importar CV o perfil" accept=".pdf,.json,application/pdf,application/json" disabled={!!busy}
+            onChange={event => { void upload(event.target.files?.[0]); event.target.value = ''; }} />
+        </label>
+        <a className="button secondary" href="/api/profile/export" download="brujula-perfil.json">
+          <FileDown size={18} /> Exportar perfil guardado
+        </a>
+      </div>
     </div>
     {error && <Notice error>{error}</Notice>}
-    {imported && Object.values(imported).some(Boolean) && <section className="panel form-section cv-review" aria-labelledby="cv-review-title">
+    {imported && (wholeProfile || Object.values(imported).some(Boolean)) && <section className="panel form-section cv-review" aria-labelledby="cv-review-title">
       <h2 id="cv-review-title">Revisar importación</h2>
       {(Object.keys(cvFields) as (keyof CvDraft)[]).map(key => imported[key] &&
         <details className="disclosure" key={key}>
@@ -678,7 +686,7 @@ function App() {
       </>}
       {listVisible && <>
         {page === 'search' && <ResultsFilters filters={filters} companies={companies} priorityLocation={priorityLocation}
-          careerScoped={!!career} showFilters={!!results && !allFailed} searching={busy === 'search'} searchDisabled={!profile || !!busy}
+          showFilters={!!results && !allFailed} searching={busy === 'search'} searchDisabled={!profile || !!busy}
           expanded={filtersExpanded} onToggleFilters={() => setFiltersExpanded(value => !value)}
           onSearch={() => void search()} onChange={next => { resetSearchView(); setFilters(next); }} />}
         {page === 'search' && career && <div className="career-scope">
@@ -690,9 +698,34 @@ function App() {
           <h1 className="results-title" aria-live="polite">{!allFailed && !loadingJobs
             ? countFormat.format(visible.length) + (visible.length === 1 ? ' oferta' : ' ofertas') : 'Resultados'}</h1>
           <div className="results-actions">
-            <details className="disclosure feeds results-sources">
+            {!allFailed && <label className="results-sort">
+              <span>Orden</span>
+              <select data-filter-active={!!filters.sort} value={filters.sort} onChange={event => {
+                resetSearchView();
+                const sort = event.target.value;
+                setFilters(current => ({ ...current, sort }));
+              }}>
+                <option value="">{career ? 'Afinidad con la profesión' : 'Recomendadas'}</option>
+                <option value="fit">Mayor encaje</option>
+                <option value="newest">Más recientes</option>
+              </select>
+            </label>}
+            <details className="disclosure results-sources">
               <summary className="button secondary">Fuentes <span className="tag">{results.sources.filter(feed => feed.ok).length}/{results.sources.length}</span><ChevronDown size={16} /></summary>
-              <ul className="panel">{results.sources.map(feed => <li key={feed.name}><strong>{feed.name}</strong><span>{feed.ok ? countFormat.format(feed.count) + ' anuncios' : feed.warning}{feed.ok && feed.warning ? ' · ' + feed.warning : ''}</span></li>)}</ul>
+              <div className="panel sources-panel" role="region" aria-label="Fuentes de empleo" tabIndex={0}>
+                <ul className="sources-list">
+                  {results.sources.map(feed => <li key={feed.name} className="source-row">
+                    <strong>{feed.name}</strong>
+                    <span>{feed.ok ? countFormat.format(feed.count) + (feed.count === 1 ? ' anuncio' : ' anuncios') : 'No disponible'}</span>
+                  </li>)}
+                  <li><a className="source-row source-link" href={ipronicsCareers} target={'__BRUJULA_DESKTOP__' in window ? undefined : '_blank'} rel="noreferrer">
+                    <strong>iPronics</strong><span>Portal externo <ArrowUpRight size={16} aria-hidden="true" /></span>
+                  </a></li>
+                </ul>
+                {results.sources.some(feed => feed.warning) && <ul className="source-notes" aria-label="Avisos de las fuentes">
+                  {results.sources.filter(feed => feed.warning).map(feed => <li key={feed.name}><strong>{feed.name}</strong> · {feed.warning}</li>)}
+                </ul>}
+              </div>
             </details>
             {!!results.automaticCount && <button type="button" className="button secondary" onClick={() => {
               setTab('automatic'); navigate('saved');
@@ -717,7 +750,7 @@ function App() {
             No se pudieron consultar las bolsas de empleo.
           </Empty>
           : results ? <Empty compact icon={<Search size={22} />} title="No hay ofertas para esta búsqueda"
-            action={filtered ? <button type="button" className="button secondary" onClick={() => { resetSearchView(); setFilters(current => ({ ...emptyFilters, similar: current.similar })); }}>Limpiar filtros</button>
+            action={filtered ? <button type="button" className="button secondary" onClick={() => { resetSearchView(); setFilters(current => ({ ...emptyFilters, similar: current.similar, sort: current.sort })); }}>Limpiar filtros</button>
               : career ? <button type="button" className="button secondary" onClick={() => { resetSearchView(); setCareer(''); }}>Ver todas las ofertas</button> : undefined}>
             {filtered ? 'Prueba con menos filtros o con otro texto.' : career ? 'No encontramos vacantes relacionadas con esta profesión.' : 'Las bolsas consultadas no devolvieron vacantes.'}
           </Empty>

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { parseEnv } from 'node:util';
 import { load } from 'cheerio';
 import { normalize } from './match.mjs';
 
@@ -67,13 +69,18 @@ function vacancy(row, board) {
 async function fetchSource(name, read) {
   try {
     if (cooldowns.get(name) > Date.now()) throw new Error('Límite de consultas. Reintento disponible en unos minutos.');
-    async function request(url) {
-      const response = await fetch(url, { signal: AbortSignal.timeout(8000), cache: 'no-store' });
+    async function request(url, options = {}) {
+      const timeout = AbortSignal.timeout(8000);
+      const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
+      const response = await fetch(url, { ...options, signal, cache: 'no-store' });
       if (response.status === 429) {
         const header = response.headers.get('retry-after');
         const delay = header && /^\d+$/.test(header) ? Number(header) * 1000 : Date.parse(header || '') - Date.now();
         cooldowns.set(name, Date.now() + (delay > 0 ? delay : 60000));
         throw new Error('La fuente ha alcanzado su límite de consultas.');
+      }
+      if (name === 'InfoJobs' && [401, 403].includes(response.status)) {
+        throw new Error('InfoJobs rechazó las credenciales o el acceso de esta aplicación.');
       }
       if (!response.ok) throw new Error('La fuente devolvió HTTP ' + response.status + '.');
       return response;
@@ -257,8 +264,188 @@ function fetchKd() {
   });
 }
 
+function fetchWestinghouse() {
+  const name = 'Westinghouse';
+  const host = 'https://careers.westinghousenuclear.com';
+  const search = host + '/search/?locationsearch=Spain';
+  return fetchSource(name, async request => {
+    const first = load(await (await request(search)).text());
+    if (!first('.pagination, a.jobTitle-link, .noresults').length) {
+      throw new Error('No se pudo leer el índice de vacantes.');
+    }
+    const urls = new Map();
+    const addLinks = page => {
+      page('a.jobTitle-link').each((_, link) => {
+        const href = page(link).attr('href');
+        const id = href?.match(/^\/job\/[^/]+\/(\d+)\/?$/)?.[1];
+        const listedLocation = page(link).closest('tr').find('.jobLocation').first().text().trim();
+        if (id) urls.set(id, { url: new URL(href, host).href, listedLocation });
+      });
+    };
+    addLinks(first);
+    const next = first('.pagination a[href*="startrow=25"]').first().attr('href');
+    let missingPage = false;
+    if (next?.startsWith('?')) {
+      try {
+        addLinks(load(await (await request(new URL(next, search))).text()));
+      } catch {
+        missingPage = true;
+      }
+    }
+    const listings = [...urls];
+    const jobs = [];
+    let missing = 0;
+    for (let offset = 0; offset < listings.length && !(cooldowns.get(name) > Date.now()); offset += 5) {
+      const batch = await Promise.allSettled(listings.slice(offset, offset + 5).map(async ([id, { url, listedLocation }]) => {
+        const page = load(await (await request(url)).text());
+        const prop = key => page('[itemprop="' + key + '"]').first();
+        const value = key => (prop(key).attr('content') || prop(key).text()).trim();
+        const country = value('addressCountry');
+        if (country && country !== 'ES') return null;
+        const validThrough = Date.parse(value('validThrough'));
+        if (validThrough < Date.now()) return null;
+        const title = value('title');
+        const content = prop('description').html();
+        const locality = value('addressLocality');
+        const location = locality ? locality + ', España' : listedLocation;
+        if (!title || !content || !location) throw new Error('Ficha incompleta.');
+        const date = Date.parse(value('datePosted'));
+        const job = vacancy({
+          id, title, content, company_name: name, absolute_url: url,
+          location: { name: location },
+          first_published: Number.isFinite(date) ? new Date(date).toISOString() : null,
+        }, name);
+        if (!job.description) throw new Error('Descripción vacía.');
+        return { ...job, id: 'westinghouse:' + id, source: name };
+      }));
+      for (const result of batch) {
+        if (result.status === 'rejected') missing++;
+        else if (result.value) jobs.push(result.value);
+      }
+    }
+    if (missing && missing === listings.length) throw new Error('No se pudieron recuperar las descripciones de la fuente.');
+    const warning = [
+      missingPage && 'No se pudo consultar la segunda página.',
+      missing && missing + ' descripciones no disponibles.',
+      cooldowns.get(name) > Date.now() && 'La consulta de descripciones se interrumpió.',
+    ].filter(Boolean).join(' ');
+    return { jobs, warning: warning || undefined };
+  });
+}
+
+function infoJobsSettings() {
+  let file = {};
+  if (process.env.BRUJULA_SOURCES_FILE) {
+    try {
+      file = parseEnv(readFileSync(process.env.BRUJULA_SOURCES_FILE, 'utf8'));
+    } catch (error) {
+      if (error.code !== 'ENOENT') return { warning: 'No se pudo leer el archivo local de credenciales de InfoJobs.' };
+    }
+  }
+  const id = process.env.INFOJOBS_CLIENT_ID || file.INFOJOBS_CLIENT_ID;
+  const secret = process.env.INFOJOBS_CLIENT_SECRET || file.INFOJOBS_CLIENT_SECRET;
+  if (!id && !secret) return null;
+  if (!id || !secret) return { warning: 'Falta el identificador o el secreto de aplicación de InfoJobs.' };
+  return { id, secret };
+}
+
+function normalizeInfoJobs(row, detail) {
+  if (detail.active === false || detail.archived || detail.deleted || detail.availableForVisualization === false) return null;
+  if (!detail.description?.trim()) throw new Error('Sin descripción completa.');
+  const location = [...new Set([
+    detail.cityPD?.value || detail.city || row.city, detail.province?.value || row.province?.value, 'España',
+  ].filter(Boolean))].join(', ');
+  const description = [
+    detail.description,
+    detail.minRequirements && 'Requisitos\n' + detail.minRequirements,
+    detail.desiredRequirements && 'Deseable\n' + detail.desiredRequirements,
+  ].filter(Boolean).join('\n');
+  const job = vacancy({
+    id: row.id, title: detail.title || row.title,
+    company_name: detail.profile?.hidden ? 'Empresa no publicada' : detail.profile?.name || row.author?.name || 'Empresa no publicada',
+    location: { name: location }, content: description, absolute_url: detail.link || row.link,
+    first_published: row.published || detail.creationDate || null,
+  }, 'infojobs');
+  const workingType = normalize(detail.teleworking?.value || row.teleworking?.value);
+  const mode = /\b(hibrid[oa]|mixto|parcial)\b/.test(workingType) ? 'Híbrido'
+    : /\b(remot[oa]|teletrabajo|solo teletrabajo)\b/.test(workingType) ? 'Remoto'
+    : /\b(presencial)\b/.test(workingType) ? 'Presencial' : job.mode;
+  const min = detail.minPay;
+  const max = detail.maxPay;
+  const amount = pay => pay?.amountValue || (pay?.amount > 0 ? pay.amount + ' €' : '');
+  const range = amount(min) && amount(max) && min.amount !== max.amount ? amount(min) + ' – ' + amount(max)
+    : amount(min) || (amount(max) && 'Hasta ' + amount(max));
+  const period = min?.periodValue || max?.periodValue || row.salaryPeriod?.value;
+  const publishedSalary = (detail.showPay !== false && range && [range, period].filter(Boolean).join(' ')) || row.salaryDescription || '';
+  return { ...job, id: 'infojobs:' + row.id, source: 'InfoJobs', mode, salary: publishedSalary || job.salary,
+    contract: [detail.contractType?.value || row.contractType?.value, detail.journey?.value || row.workDay?.value].filter(Boolean).join(' · ') };
+}
+
+export function fetchInfoJobs(location, settings = infoJobsSettings()) {
+  if (!settings) return null;
+  return fetchSource('InfoJobs', async request => {
+    if (settings.warning) throw new Error(settings.warning);
+    const headers = { Accept: 'application/json', Authorization: 'Basic ' + Buffer.from(settings.id + ':' + settings.secret).toString('base64') };
+    const deadline = AbortSignal.timeout(18000);
+    const get = async url => (await request(url, { headers, signal: deadline, redirect: 'error' })).json();
+    const queries = ['fotónica', 'instrumentación', 'ensayos', 'biomédica', 'I+D', 'energías renovables'];
+    const rows = new Map();
+    let missing = 0;
+    let firstFailure;
+    const list = await Promise.allSettled(queries.map(q => {
+      const search = new URLSearchParams({ q, country: 'espana', maxResults: '5', order: 'relevancia-desc' });
+      if (madrid.test(normalize(location))) search.set('province', 'madrid');
+      return get('https://api.infojobs.net/api/9/offer?' + search);
+    }));
+    for (const result of list) {
+      if (result.status === 'rejected' || !Array.isArray(result.value.offers)) {
+        missing++;
+        if (result.status === 'rejected') firstFailure ||= result.reason;
+        continue;
+      }
+      for (const offer of result.value.offers.slice(0, 5)) {
+        if (typeof offer?.id === 'string' && offer.id) rows.set(offer.id, offer);
+      }
+    }
+    if (missing === queries.length) throw firstFailure || new Error('InfoJobs no devolvió un listado válido.');
+    const jobs = [];
+    let missingDetails = 0;
+    const offers = [...rows.values()];
+    for (let offset = 0; offset < offers.length && !deadline.aborted && !(cooldowns.get('InfoJobs') > Date.now()); offset += 5) {
+      const details = await Promise.allSettled(offers.slice(offset, offset + 5).map(async row => {
+        const detail = await get('https://api.infojobs.net/api/7/offer/' + encodeURIComponent(row.id));
+        return normalizeInfoJobs(row, detail);
+      }));
+      for (const result of details) {
+        if (result.status === 'rejected') missingDetails++;
+        else if (result.value) jobs.push(result.value);
+      }
+    }
+    if (!jobs.length && offers.length && (missingDetails || deadline.aborted || cooldowns.get('InfoJobs') > Date.now())) {
+      throw new Error('No se pudieron recuperar las descripciones completas de InfoJobs.');
+    }
+    const warning = ['Hasta cinco anuncios por área técnica.',
+      missing && 'Algunas consultas no respondieron.',
+      missingDetails && missingDetails + ' fichas incompletas o inaccesibles.',
+      (deadline.aborted || cooldowns.get('InfoJobs') > Date.now()) && 'La consulta de fichas se interrumpió.'].filter(Boolean).join(' ');
+    return { jobs, warning };
+  });
+}
+
 export async function liveJobs(location) {
-  const feeds = await Promise.all([...boards.map(fetchBoard), fetchTeamtailor('ARQUIMEA', 'https://careers.arquimea.com', 2), fetchTeamtailor('Sener', 'https://www.engineering-jobs.sener', 3), fetchSmartRecruiters('AFRY'), fetchSmartRecruiters('Eurofins'), fetchKd()]);
+  const infoJobs = fetchInfoJobs(location);
+  const feeds = await Promise.all([
+    ...boards.map(fetchBoard),
+    fetchTeamtailor('ARQUIMEA', 'https://careers.arquimea.com', 2),
+    fetchTeamtailor('Sener', 'https://www.engineering-jobs.sener', 3),
+    fetchTeamtailor('RDT', 'https://careers.rdt.com', 3),
+    fetchSmartRecruiters('AFRY'),
+    fetchSmartRecruiters('Eurofins'),
+    fetchSmartRecruiters('SGS'),
+    fetchKd(),
+    fetchWestinghouse(),
+    ...(infoJobs ? [infoJobs] : []),
+  ]);
   const jobs = [];
   const seen = new Set();
   for (const job of feeds.flatMap(feed => feed.jobs).sort((a, b) => b.description.length - a.description.length)) {

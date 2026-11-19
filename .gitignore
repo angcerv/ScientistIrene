@@ -9,3 +9,4 @@ src-tauri/target/
 src-tauri/gen/
 src-tauri/desktop-runtime/
 src-tauri/.desktop-stage-*/
+fuentes.env

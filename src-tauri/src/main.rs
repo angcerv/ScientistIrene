@@ -60,6 +60,7 @@ fn launch(app: &mut tauri::App) -> Result<(), Box<dyn Error>> {
         .current_dir(&runtime)
         .env("PORT", "0")
         .env("DB_PATH", directory.join("brujula.sqlite"))
+        .env("BRUJULA_SOURCES_FILE", directory.join("fuentes.env"))
         .env("BRUJULA_DESKTOP_TOKEN", &token)
         .env_remove("NODE_OPTIONS")
         .stdin(Stdio::piped())

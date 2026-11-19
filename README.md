@@ -21,12 +21,27 @@ Los datos se guardan en `data/brujula.sqlite`. El PDF se procesa en memoria y el
 | --- | --- | --- |
 | [Greenhouse Job Board API](https://docs.greenhouse.io/job-board.html) | Lectura pública por bolsa, sin clave | Integrada con Cabify, Wallapop, Typeform y Celonis. Consulta en directo con descripción completa y enlace de cada anuncio. |
 | [Lever Postings API](https://github.com/lever/postings-api) | Lectura pública por bolsa | Candidata para ampliar el catálogo de empresas. |
-| [InfoJobs](https://developer.infojobs.net/documentation/app-auth/index.xhtml) | Client ID y secreto de aplicación | Candidata para ampliar cobertura en España. Las llamadas requieren credenciales de desarrollador. |
+| [InfoJobs](https://developer.infojobs.net/documentation/app-auth/index.xhtml) | Client ID y secreto de aplicación | Conector opcional de búsqueda y detalle de solo lectura. Requiere credenciales de desarrollador. |
 | [Jooble](https://help.jooble.org/en/support/solutions/articles/60001448238) | Clave regional. Cuota gratuita documentada de 100 peticiones diarias | Los resultados incluyen extractos. Se necesitaría acceso autorizado a cada texto completo. |
 | [Adzuna](https://developer.adzuna.com/docs/terms_of_service) | Registro y clave. Cuotas según plan y atribución obligatoria al mostrar anuncios | Acceso de evaluación para búsqueda personal. La descripción disponible debe verificarse antes de integrar y las condiciones comerciales requieren licencia. |
 | [Remotive](https://remotive.com/remote-jobs/api) | API pública de remoto con atribución y 24 horas de demora. API privada de pago | Candidata para remoto si se acepta la demora y se verifica elegibilidad para España. |
 
 El botón de búsqueda consulta cada bolsa en el momento. Las bolsas pueden devolver datos parciales. La pantalla muestra cuáles respondieron y cuáles fallaron. Para cambiar las bolsas, copia `.env.example` a `.env` y configura `GREENHOUSE_BOARDS` con sus identificadores públicos. Las variables sensibles deben definirse solo en el backend.
+
+### Activar InfoJobs
+
+[Registra la aplicación en InfoJobs Developers](https://developer.infojobs.net/documentation/quick-start/index.xhtml) y copia el Client ID y el Client Secret en un archivo privado con estas variables:
+
+```dotenv
+INFOJOBS_CLIENT_ID=
+INFOJOBS_CLIENT_SECRET=
+```
+
+- En la versión web local, usa `.env` en la raíz del proyecto.
+- En Tauri, usa `fuentes.env` junto a `brujula.sqlite` en la carpeta de datos de la app. En Windows se encuentra normalmente en `%LOCALAPPDATA%\es.brujula.empleo`. En macOS se encuentra normalmente en `~/Library/Application Support/es.brujula.empleo`.
+- Reinicia la aplicación. InfoJobs aparecerá en **Fuentes** cuando se consulte una búsqueda. Respeta las [condiciones de uso de InfoJobs](https://developer.infojobs.net/legal/legal/terms-of-use.xhtml) aplicables al registro.
+
+Brújula consulta hasta cinco resultados por área técnica y recupera por separado la descripción y los requisitos. Usa autenticación de aplicación e ignora los resultados sin descripción completa. Las credenciales quedan en el archivo local. La consulta envía a InfoJobs los términos técnicos y la provincia si corresponde.
 
 ## Compatibilidad y profesiones
 
@@ -48,11 +63,15 @@ npm start
 
 ## Perfil personalizado y escritorio
 
-En **Mi perfil → Elegir archivo** puedes importar un perfil JSON de Brújula, aplicarlo al borrador y guardar. El perfil preparado para esta instalación está en `data/Perfil-Irene.json`. La carpeta `data` se excluye del repositorio. Cuando el archivo está presente al compilar, la versión de escritorio personalizada incluye ese JSON e inicializa SQLite en el primer arranque. El PDF original y la base de datos del equipo de compilación se quedan fuera del instalador. Si compilaste sin el archivo de perfil, también puedes importarlo desde la misma pantalla.
+En **Mi perfil → Exportar perfil guardado** puedes descargar una copia JSON de tus datos y preferencias. Para recuperarla en otro equipo, usa **Importar archivo**, aplica el contenido al borrador y pulsa **Guardar perfil**.
+
+El perfil preparado para esta instalación está en `data/Perfil-Irene.json`. La carpeta `data` se excluye del repositorio. Cuando el archivo está presente al compilar, la versión de escritorio personalizada incluye ese JSON e inicializa SQLite en el primer arranque. El PDF original y la base de datos del equipo de compilación se quedan fuera del instalador. Si compilaste sin el archivo de perfil, también puedes importarlo desde la misma pantalla.
 
 La clasificación da peso a la I+D experimental, la fotónica, la instrumentación, los ensayos, la fabricación avanzada y las competencias transferibles. Reconoce municipios de la Comunidad de Madrid, conserva oportunidades en otras zonas de España y señala cuándo hay que confirmar la elegibilidad para trabajar en remoto desde España. Las condiciones de ubicación, viajes y reubicación se contrastan con el anuncio cuando hay evidencia textual. Los años de experiencia y las tecnologías especializadas se muestran como requisitos por revisar cuando se detectan.
 
-La búsqueda también consulta los RSS públicos de [ARQUIMEA](https://careers.arquimea.com/jobs.rss) y [Sener](https://www.engineering-jobs.sener/jobs.rss), los anuncios estructurados publicados en el [índice de KD](https://www.kd.tech/sitemap.xml) y la [API pública de SmartRecruiters](https://developers.smartrecruiters.com/docs/posting-api) para AFRY y Eurofins. SmartRecruiters consulta hasta 40 anuncios de cada bolsa en España por búsqueda y recupera sus descripciones. La interfaz indica la cobertura parcial de una fuente cuando corresponda.
+La búsqueda también consulta los RSS públicos de [ARQUIMEA](https://careers.arquimea.com/jobs.rss), [Sener](https://www.engineering-jobs.sener/jobs.rss) y [RDT](https://careers.rdt.com/jobs.rss), los anuncios estructurados publicados en el [índice de KD](https://www.kd.tech/sitemap.xml) y la [API pública de SmartRecruiters](https://developers.smartrecruiters.com/docs/posting-api) para AFRY, Eurofins y SGS. RDT aporta vacantes de ingeniería aplicada y SGS publica puestos de inspección y ensayos industriales. SmartRecruiters consulta hasta 40 anuncios de cada bolsa en España por búsqueda y recupera sus descripciones. La interfaz indica la cobertura parcial de una fuente cuando corresponda.
+
+[Westinghouse](https://careers.westinghousenuclear.com/search/?locationsearch=Spain) se consulta sin credenciales. El conector lee las dos primeras páginas de resultados en España y el marcado de las fichas públicas para obtener la descripción, la localidad y la fecha de publicación.
 
 ### Abrir la ventana de escritorio desde el proyecto
 
