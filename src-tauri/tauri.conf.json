@@ -1,0 +1,24 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Brújula Empleo",
+  "version": "0.1.0",
+  "identifier": "es.brujula.empleo",
+  "build": {
+    "beforeDevCommand": { "script": "npm run desktop:prepare", "wait": true },
+    "beforeBuildCommand": "npm run desktop:prepare",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [],
+    "security": { "capabilities": [] }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/icon.ico"],
+    "resources": ["desktop-runtime/"],
+    "windows": {
+      "nsis": { "installMode": "currentUser", "languages": ["Spanish"] }
+    }
+  }
+}

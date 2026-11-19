@@ -1,0 +1,33 @@
+{
+  "name": "brujula-empleo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env server/index.mjs",
+    "build": "tsc --noEmit && vite build",
+    "check": "node --experimental-strip-types --test",
+    "start": "node --env-file-if-exists=.env server/index.mjs --production",
+    "tauri": "node scripts/tauri.mjs",
+    "desktop:build": "tauri build",
+    "desktop:prepare": "npm run build && node scripts/prepare-desktop.mjs"
+  },
+  "dependencies": {
+    "cheerio": "^1.1.2",
+    "express": "^5.1.0",
+    "lucide-react": "^0.468.0",
+    "pdf-parse": "^2.4.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.4.0"
+  }
+}

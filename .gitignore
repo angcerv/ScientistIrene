@@ -1,0 +1,11 @@
+node_modules/
+dist/
+data/
+.env
+.env.*
+!.env.example
+*.sqlite*
+src-tauri/target/
+src-tauri/gen/
+src-tauri/desktop-runtime/
+src-tauri/.desktop-stage-*/
