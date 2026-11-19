@@ -1,9 +1,17 @@
 name: Instalador Windows
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/windows.yml
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: brujula-empleo-windows
+  cancel-in-progress: false
 
 jobs:
   windows-x64:
@@ -18,9 +26,34 @@ jobs:
       - run: rustup default stable-x86_64-pc-windows-msvc
       - run: npm ci
       - run: npm run check
+      - name: Comprobar que no hay datos locales
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath 'data') {
+            throw 'La compilación pública debe partir de un directorio sin datos locales.'
+          }
       - run: npm run desktop:build
       - uses: actions/upload-artifact@v4
         with:
           name: Brujula-Empleo-Windows-x64
           path: src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
+      - name: Publicar instalador genérico
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (Test-Path -LiteralPath 'src-tauri/desktop-runtime/data/Perfil-Irene.json') {
+            throw 'El instalador público debe compilarse sin un perfil inicial.'
+          }
+          $installers = @(Get-ChildItem -LiteralPath 'src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Se esperaba un instalador NSIS.' }
+          $installer = 'Brujula-Empleo-Windows-x64-setup.exe'
+          Copy-Item -LiteralPath $installers[0].FullName -Destination $installer
+          gh release view brujula-empleo-windows *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload brujula-empleo-windows $installer --clobber
+          } else {
+            gh release create brujula-empleo-windows $installer --target "$env:GITHUB_SHA" --prerelease --title "Brújula Empleo para Windows" --notes "Instalador genérico sin firma para Windows x64."
+          }
+          exit $LASTEXITCODE
